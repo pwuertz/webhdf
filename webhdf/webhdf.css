@@ -131,3 +131,20 @@ table.webhdf_table tr:nth-child(even){ background-color:#fff; }
     padding-right: 5px;
     vertical-align: middle;
 }
+
+#scale-slider {
+    width: 100px;
+    display: inline-block;
+    margin-left: 10px;
+}
+
+.webhdf_image_container {
+    margin: 10px;
+    width: 90%;
+}
+
+canvas.webhdf_image {
+    width: 100%;
+    height: auto;
+    border: 1px solid #444;
+}

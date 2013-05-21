@@ -12,6 +12,7 @@ html_template = """
     <link rel="stylesheet" type="text/css" href="webhdf.css" />
     <script type="text/javascript" src="jquery_1.9.1_xhr2patch.js"></script>
     <script type="text/javascript" src="ndarray.js"></script>
+    <script type="text/javascript" src="imshow.js"></script>
     <script type="text/javascript" src="webhdf.js"></script>
 
     <link rel="stylesheet" href="jquery-ui-1.10.3.custom.min.css" />
@@ -21,7 +22,7 @@ html_template = """
     <div id="webhdf_navigation"></div>
     <div id="webhdf_content"></div>
 <script>
-webhdf_load("{url_webhdf}", "{path}");
+webhdf.load("{url_webhdf}", "{path}");
 </script>
 </body>
 </html>
@@ -45,11 +46,11 @@ def dtype2json(dtype):
     if not dtype.fields:
         return str(dtype)
     else:
-        record = []
-        for n in dtype.names:
-            subdt = dtype.fields[n][0]
-            record.append({"field": n, "dtype": dtype2json(subdt)})
-        return record
+        fields = {}
+        for name in dtype.names:
+            subdtype = dtype.fields[name][0]
+            fields[name] = dtype2json(subdtype)
+        return {"names": dtype.names, "fields": fields}
 
 def response_file(path_local, fmt):
     if fmt == "raw":
@@ -134,7 +135,7 @@ def webhdf_application(environ, start_response):
     req = Request(environ)
     
     # get/sanitize path and check if requested file exists
-    path = req.params.get("path").lstrip('/')
+    path = req.params.get("path", "").lstrip('/')
     if not path:
         res = HTTPNotFound("Missing path argument for hdf file.")
         return res(environ, start_response)

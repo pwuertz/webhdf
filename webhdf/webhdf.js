@@ -2,251 +2,329 @@
 //
 //
 
-var webhdf = {
-    title: "HDF View",
-    ds_style: 0,
-    ds_imstyle: 0,
-    url: "",
-    fname: "",
-    fpath: "",
-    root: {},
-};
+var webhdf = (function() {
 
-function webhdf_load(url, path) {
-    args = {"path": path, "fmt": "json"};
-    $.ajax({dataType: "json", url: url, data: args, success: function(data) {
-        webhdf.url = url;
-        webhdf.fname = data.fname;
-        webhdf.fpath = path;
-        webhdf.root = data;
-        
-        var nav_div = $("#webhdf_navigation")[0];
-        webhdf_nav_render_group(webhdf.root, nav_div);
-        $(nav_div).fadeIn(300);
-        webhdf_content_render_group(webhdf.root);
-        document.title = webhdf.title + " - " + webhdf.fname;
-    }, error: function(jqXHR, textStatus, errorThrown) {
-        alert("Request error: "+textStatus);
-    }});
-}
-
-function webhdf_nav_render_group(group, html_parent) {
-    var div_group = document.createElement("div");
-    $(div_group).addClass("webhdf_nav_group")
-    html_parent.appendChild(div_group);
-    var name = group.name;
-    div_group.innerHTML = "<div class='webhdf_nav_item'><span class='webhdf_nav_group_name'>"+name+"</span></div>";
-    $(div_group).children(":first").click(function () {
-        $("#webhdf_content").fadeOut(250, function () {
-            webhdf_content_render_group(group);
-            $("#webhdf_content").fadeIn(350);
-        });
-    });
-    
-    // ouput all groups in this group
-    for (var i=0; i < group.groups.length; ++i) {webhdf_nav_render_group(group.groups[i], div_group);}
-    // ouput all datasets in this group
-    for (var i=0; i < group.datasets.length; ++i) {webhdf_nav_render_dataset(group.datasets[i], div_group);}
-}
-
-function webhdf_nav_render_dataset(ds, html_parent) {
-    var div_dset = document.createElement("div");
-    $(div_dset).addClass("webhdf_nav_dataset")
-    html_parent.appendChild(div_dset);
-    div_dset.innerHTML = "<div class='webhdf_nav_item'><span class='webhdf_nav_dataset_name'>"+ds.name+"</span></div>";
-    $(div_dset).children(":first").click(function () {
-        $("#webhdf_content").fadeOut(250, function () {
-            webhdf_content_render_dataset(ds);
-            $("#webhdf_content").fadeIn(350);
-        });
-    });
-}
-
-function webhdf_div_attrs(attrs) {
-    var div = document.createElement("div");
-    if (!$.isEmptyObject(attrs)) {
-        div.className = "webhdf_content webhdf_attrs";
-        var a = $.map(attrs, function (v, k) {
-            return k+"="+v;
-        });
-        div.innerHTML = a.join("; ");   
-    }
-    return div;
-}
-
-function webhdf_div_dsinfo(ds) {
-    var div = document.createElement("div");
-    div.className = "webhdf_content webhdf_dsinfo";
-    div.innerHTML = "("+ds.shape.join("x")+")" + " - ";
-    if (ds.dtype instanceof Array) {
-        var recs = $.map(ds.dtype, function (d) {
-            return d.field+": "+d.dtype;
-        })
-        div.innerHTML += "["+recs.join(", ")+"]";
-    } else {
-        div.innerHTML += ds.dtype;
-    }
-    return div;
-}
-
-function webhdf_format_data(dset, fmt) {
-	// if data is a buffer, convert to nested array
-	var data;
-	if (dset.databuffer) {
-		if (dset.dtype instanceof Array) {
-			data = recarray_to_nested(dset.databuffer, dset.shape, dset.dtype);
-		} else {
-			var ViewClass = dtype_map[dset.dtype].View;
-			var view = new ViewClass(dset.databuffer);
-			data = ndarray_to_nested(view, dset.shape);
-		}
-	} else if (dset.data) {
-		data = dset.data;
-	} else {
-		return "";
+	var settings = {
+		title: "HDF View",
+		ds_style_txt: 0,
+		ds_style_img: 0,
+		url: "",
+		fname: "",
+		fpath: "",
+		root_group: {},
 	}
-	
-	// define ndimensional formats
-	var ndfmt;
-	if (fmt == "[]") {
-		ndfmt = {open: ["["], close: ["]"], sep: [", "]};
-	} else if (fmt == "{}") {
-		ndfmt = {open: ["{"], close: ["}"], sep: [", "]};
-	} else if (fmt == "txt") {
-		ndfmt = {open: [""], close: [""], sep: ["\n", " "]};
-	} else if (fmt == "html") {
-		if (dset.shape.length === 1 && dset.dtype instanceof Array) {
-		        var names = $.map(dset.dtype, function (d) {return d.field});
-			var header = "<tr><th></th><th>" + names.join("</th><th>") + "</th></tr>";
-		} else {
-			var header = "";
-		}
-		ndfmt = {open: ["<table class='webhdf_table'>"+header+"<tr><td></td><td>", ""],
-		         close: ["</td></tr></table>", ""], sep: ["</td></tr>\n<tr><td></td><td>", "</td><td>", ", "]};
+
+	var div_navigation;
+	var div_content;
+
+	function load(url, path) {
+		div_navigation = document.getElementById("webhdf_navigation");
+		div_content = document.getElementById("webhdf_content");
+
+		args = {
+			path: path,
+			fmt: "json"
+		};
+		$.ajax({
+			dataType: "json",
+			url: url,
+			data: args,
+			success: function(data) {
+				settings.url = url;
+				settings.fname = data.fname;
+				settings.fpath = path;
+				settings.root_group = initDataStructure(data);
+
+				buildNavigation();
+				setGroupContent(settings.root_group);
+				document.title = settings.title + " - " + settings.fname;
+			},
+			error: function(jqXHR, textStatus, errorThrown) {
+				alert("Error loading HDF file: " + textStatus);
+			}
+		});
 	}
-	// return formatted array
-	return ndarray_nested_stringify(data, ndfmt);
-}
 
-function webhdf_content_render_group(group) {
-    var content_div = $("#webhdf_content")[0];
-    content_div.innerHTML = "<div class='webhdf_title'></div>";
-    content_div.appendChild(webhdf_div_attrs(group.attrs));
+	function initDataStructure(data_json) {
+		function visit_group(group) {
+			group.groups.forEach(function(sub_group) {
+				visit_group(sub_group);
+			});
+			group.datasets.forEach(function(dataset) {
+				dataset.dtype = ndarray.createDtypeFromJson(dataset.dtype);
+				dataset.data = null;
+			});
+		}
+		visit_group(data_json);
+		return data_json;
+	}
 
-    if (group.name != "/") {
-        $(".webhdf_title", content_div).text("Group: "+group.name);
-    } else {
-        $(".webhdf_title", content_div).text(webhdf.fname);
-        var div = document.createElement("div");
-        div.className = "webhdf_content";
-        div.innerHTML = "Download <a class='webhdf_link' href='"+webhdf.url+"?path="+webhdf.fpath+"&"+"fmt=raw'>"+webhdf.fname+"</a>";
-        content_div.appendChild(div);
-    }
-}
+	function buildNavigation() {
+		div_navigation.innerHTML = "";
+		addGroupToNavigation(settings.root_group, div_navigation);
+	}
 
-function webhdf_content_render_dataset(dset) {
-    var content_div = $("#webhdf_content")[0];
-    content_div.innerHTML = "<div class='webhdf_title'></div>";
-    $(".webhdf_title", content_div).text("Dataset: "+dset.name);
+	function addGroupToNavigation(group, parent) {
+		// add a new link for the group to parent
+		var div = document.createElement("div");
+		parent.appendChild(div);
+		div.className = "webhdf_nav_group";
+		div.innerHTML = "<div class='webhdf_nav_item'><span class='webhdf_nav_group_name'>" + group.name + "</span></div>";
+		$(div).children(":first").click(function() {
+			$(div_content).fadeOut(250, function() {
+				setGroupContent(group);
+				$(div_content).fadeIn(350);
+			});
+		});
+		// add sub-groups and datasets
+		group.groups.forEach(function(sub_group) {
+			addGroupToNavigation(sub_group, div);
+		});
+		group.datasets.forEach(function(dataset) {
+			addDatasetToNavigation(dataset, div);
+		});
+	}
 
-    content_div.appendChild(webhdf_div_dsinfo(dset));
-    content_div.appendChild(webhdf_div_attrs(dset.attrs));
-    
-    // if data is not present, try to load it and return
-    if (!(dset.data || dset.databuffer)) {
-    	// add loading animation
-    	var div_loading = document.createElement("div");
-    	div_loading.innerHTML = "<img src='icons/ajax-loader.gif' style='margin:20px'/>";
-    	content_div.appendChild(div_loading);
-    	function error(xhr, status, thrown) {
-    		div_loading.innerHTML = "Could not load data: " + status;
-    	}
-    	// load dataset
-    	if (isSupportedDtype(dset.dtype)) {
-    		var args = {path: webhdf.fpath, dset: dset.path, fmt: "raw"};
-    		$.ajax({dataType: "binary", xhrFields: {responseType : 'arraybuffer'}, url: webhdf.url,
-    		        data: args, error: error, success: function(data) {
-    			dset.databuffer = data;
-    			console.log("xhr2 binary: " + data.byteLength + " bytes");
-    			webhdf_content_render_dataset(dset);
-    		}});
-    	} else {
-    		var args = {path: webhdf.fpath, dset: dset.path, fmt: "json"};
-    		$.ajax({dataType: "json", url: webhdf.url, data: args, error: error, success: function(data) {
-    			dset.data = data;
-    			webhdf_content_render_dataset(dset);
-    		}});
-    	}
-    	return;
-    }
-    
-    // if dataset is already present, display as text or image
-    if ("CLASS" in dset.attrs && dset.attrs["CLASS"] == "IMAGE") {
-    	content_div.appendChild(webhdf_div_image_representation(dset));
-    } else {
-        content_div.appendChild(webhdf_div_text_representation(dset));
-    }
-}
+	function addDatasetToNavigation(dataset, parent) {
+		// add a new link for the dataset to parent
+		var div_dataset = document.createElement("div");
+		parent.appendChild(div_dataset);
+		div_dataset.className = "webhdf_nav_dataset";
+		div_dataset.innerHTML = "<div class='webhdf_nav_item'><span class='webhdf_nav_dataset_name'>" + dataset.name + "</span></div>";
+		$(div_dataset).children(":first").click(function() {
+			$(div_content).fadeOut(250, function() {
+				setDatasetContent(dataset);
+				$(div_content).fadeIn(350);
+			});
+		});
+	}
 
-function webhdf_div_text_representation(dset) {
-    var div = document.createElement("div");
-    var $tree = $("<div>"+
-                  "<a class='webhdf_link'>[]-style</a> | "+
-                  "<a class='webhdf_link'>{}-style</a> | "+
-                  "<a class='webhdf_link'>txt-style</a> | "+
-                  "<a class='webhdf_link'>html</a> "+
-                  "</div>"+
-                  "<div id='dataset'></div>");
-    $tree.appendTo(div);
-    var div_controls = $tree[0];
-    var div_dataset = $tree[1];
-    var fmts = ["[]", "{}", "txt", "html"];
-    $(div_controls).on("click", "a", function(){
-        webhdf.ds_style = $(this).index();
-        var fmt = fmts[webhdf.ds_style];
-        if (fmt != "html") {
-            var $box = $("<textarea readonly class='webhdf_textarea'></textarea>");
-            $box.text(webhdf_format_data(dset, fmt));
-        } else {
-            var $box = $(webhdf_format_data(dset, "html"));
-        }
-        $(div_dataset).empty();
-        $box.appendTo(div_dataset);
-    });
-    $("a:eq("+webhdf.ds_style+")", div_controls).click();
-    return div;
-}
+	function createAttributesDiv(attrs) {
+		var div = document.createElement("div");
+		if (!$.isEmptyObject(attrs)) {
+			div.className = "webhdf_content webhdf_attrs";
+			var a = $.map(attrs, function(v, k) {
+				return k + "=" + v;
+			});
+			div.innerHTML = a.join("; ");
+		}
+		return div;
+	}
 
-function webhdf_div_image_representation(dset) {
-    var div = document.createElement("div");
-    var $tree = $("<div>"+
-                  "<a class='webhdf_link'>jet</a> | "+
-                  "<a class='webhdf_link'>wjet</a> | "+
-                  "<a class='webhdf_link'>hot</a> | "+
-                  "<a class='webhdf_link'>bwr</a> | "+
-                  "<a class='webhdf_link'>gray</a> "+
-                  "<div id='scale-slider' style='width: 100px; display:inline-block; margin-left: 10px'></div>"+
-                  "</div>"+
-                  "<div style='margin: 10px; width: 90%'><canvas width='"+dset.shape[1]+"' height='"+dset.shape[0]+"' style='width: 100%; height: auto; border: 1px solid #444'></canvas></div>");
-    $tree.appendTo(div);
-    var div_controls = $tree[0];
-    var canvas = $("canvas", $tree[1])[0];
-    canvas.width = dset.shape[1];
-    canvas.height = dset.shape[0];
-    // scaling
-    $("#scale-slider",$tree).slider({min: 10, max: 100, value: 100, slide: function(event, ui){
-    	$(canvas).css("width", String(ui.value)+"%");
-    }});
-    // drawing
-    var cmaps = ["jet", "wjet", "hot", "bwr","gray"];
-    $(div_controls).on("click", "a", function(){
-    	webhdf.ds_imstyle = $(this).index();
-    	var ViewClass = dtype_map[dset.dtype].View;
-        var view = new ViewClass(dset.databuffer);
-    	var image = ndarray_to_canvas(view, dset.shape[1], dset.shape[0], {cmap: cmaps[webhdf.ds_imstyle]});
-    	var ctx = canvas.getContext("2d");
-    	ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
-    });
-    $("a:eq("+webhdf.ds_imstyle+")", div_controls).click();
-    return div;
-}
+	function createDatasetInfoDiv(dataset) {
+		var div = document.createElement("div");
+		div.className = "webhdf_content webhdf_dsinfo";
+		var shape_str = dataset.shape.join("x");
+		var dtype_str = dataset.dtype.toString();
+		div.innerHTML = "(" + shape_str + ") - " + dtype_str;
+		return div;
+	}
+
+	function formatData(dataset, fmt) {
+		// get data as nested array
+		var data = (dataset.data instanceof Array) ? dataset.data : ndarray.createNestedArray(dataset.data, dataset.shape);
+
+		// define formats for ndimensional representation
+		var ndfmt;
+		if (fmt == "[]") {
+			ndfmt = {
+				open: ["["],
+				close: ["]"],
+				sep: [", "]
+			};
+		} else if (fmt == "{}") {
+			ndfmt = {
+				open: ["{"],
+				close: ["}"],
+				sep: [", "]
+			};
+		} else if (fmt == "txt") {
+			ndfmt = {
+				open: [""],
+				close: [""],
+				sep: ["\n", " "]
+			};
+		} else if (fmt == "html") {
+			if (dataset.shape.length === 1 && dataset.dtype instanceof ndarray.DtypeRecord) {
+				var header = "<tr><th></th><th>" + dataset.dtype.names.join("</th><th>") + "</th></tr>";
+			} else {
+				var header = "";
+			}
+			ndfmt = {
+				open: ["<table class='webhdf_table'>" + header + "<tr><td></td><td>", ""],
+				close: ["</td></tr></table>", ""],
+				sep: ["</td></tr>\n<tr><td></td><td>", "</td><td>", ", "]
+			};
+		}
+		// return formatted array
+		return ndarray.nestedArrayToString(data, ndfmt);
+	}
+
+	function setGroupContent(group) {
+		div_content.innerHTML = "<div class='webhdf_title'></div>";
+		div_content.appendChild(createAttributesDiv(group.attrs));
+
+		if (group.name != "/") {
+			$(".webhdf_title", div_content).text("Group: " + group.name);
+		} else {
+			$(".webhdf_title", div_content).text(settings.fname);
+			var div = document.createElement("div");
+			div.className = "webhdf_content";
+			div.innerHTML = "Download <a class='webhdf_link' href='" + settings.url + "?path=" + settings.fpath + "&" + "fmt=raw'>" + settings.fname + "</a>";
+			div_content.appendChild(div);
+		}
+	}
+
+	function setDatasetContent(dataset) {
+		div_content.innerHTML = "<div class='webhdf_title'></div>";
+		div_content.firstChild.innerHTML = "Dataset: " + dataset.name;
+		div_content.appendChild(createDatasetInfoDiv(dataset));
+		div_content.appendChild(createAttributesDiv(dataset.attrs));
+
+		// if data is not present, try to load it and return
+		if (!dataset.data) {
+			// add loading animation
+			var div_loading = document.createElement("div");
+			div_loading.innerHTML = "<img src='icons/ajax-loader.gif' style='margin:20px'/>";
+			div_content.appendChild(div_loading);
+			var show_error = function(xhr, status, thrown) {
+				div_loading.innerHTML = "Could not load data: " + status;
+			};
+			// load dataset
+			var args = {
+				path: settings.fpath,
+				dset: dataset.path,
+			};
+			if (dataset.dtype.isSupported()) {
+				args.fmt = "raw";
+				var show_data = function(data) {
+					dataset.data = ndarray.createViewFromBuffer(data, dataset.dtype);
+					if (dataset.data) {
+						setDatasetContent(dataset);
+					}
+				};
+				$.ajax({
+					dataType: "binary",
+					xhrFields: {
+						responseType: 'arraybuffer'
+					},
+					url: settings.url,
+					data: args,
+					error: show_error,
+					success: show_data,
+				});
+			} else {
+				args.fmt = "json";
+				var show_data = function(data) {
+					dataset.data = data;
+					if (dataset.data) {
+						setDatasetContent(dataset);
+					}
+				};
+				$.ajax({
+					dataType: "json",
+					url: webhdf.url,
+					data: args,
+					error: show_error,
+					success: show_data,
+				});
+			}
+			return;
+		}
+
+		// if dataset is already present, display as text or image
+		if ("CLASS" in dataset.attrs && dataset.attrs["CLASS"] == "IMAGE") {
+			var div = createDatasetAsImageDiv(dataset);
+			div_content.appendChild(div);
+		} else {
+			var div = createDatasetAsTextDiv(dataset);
+			div_content.appendChild(div);
+		}
+	}
+
+	function createDatasetAsTextDiv(dataset) {
+		var div = document.createElement("div");
+		
+		// create div containing links for switching format
+		var div_formats = document.createElement("div");
+		div_formats.className = "webhdf_content";
+		var fmts = ["[]", "{}", "txt", "html"];
+		var links = $.map(fmts, function(fmt) {
+			return "<a class='webhdf_link'>" + fmt + "</a>";
+		});
+		div_formats.innerHTML = "Format: " + links.join(" | ");
+		div.appendChild(div_formats);
+		
+		// create div containing the dataset
+		var div_dataset = document.createElement("div");
+		div.appendChild(div_dataset);
+		
+		// add handlers for switching the dataset format
+		$(div_formats).on("click", "a", function() {
+			settings.ds_style_txt = $(this).index();
+			var fmt = fmts[settings.ds_style_txt];
+			if (fmt != "html") {
+				var $box = $("<textarea readonly class='webhdf_textarea'></textarea>");
+				$box.text(formatData(dataset, fmt));
+			} else {
+				var $box = $(formatData(dataset, "html"));
+			}
+			div_dataset.innerHTML = "";
+			$box.appendTo(div_dataset);
+		});
+		$("a:eq(" + settings.ds_style_txt + ")", div_formats).click();
+		return div;
+	}
+
+	function createDatasetAsImageDiv(dataset) {
+		var div = document.createElement("div");
+		var width = dataset.shape[1];
+		var height = dataset.shape[0];
+		
+		// append div for control elements
+		var div_controls = document.createElement("div");
+		var cmaps = imshow.cmaps; // ["jet", "wjet", "hot", "bwr", "gray"]
+		var cmap_links = $.map(cmaps, function(cmap) {
+			return "<a class='webhdf_link'>" + cmap + "</a>";
+		});
+		div_controls.innerHTML = cmap_links.join(" | ");
+		div_controls.innerHTML += "<div id='scale-slider'></div>";
+		div.appendChild(div_controls);
+		
+		// append div containing the image canvas
+		var div_image = document.createElement("div");
+		div_image.className = "webhdf_image_container";
+		var canvas = document.createElement("canvas");
+		canvas.className = "webhdf_image";
+		canvas.width = width;
+		canvas.height = height;
+		div_image.appendChild(canvas);
+		div.appendChild(div_image);
+
+		// init slider for scaling
+		$("#scale-slider", div_controls).slider({
+			min: 10,
+			max: 100,
+			value: 100,
+			slide: function(event, ui) {
+				canvas.style.width = String(ui.value) + "%";
+			}
+		});
+		// add handlers for switching colormap
+		$(div_controls).on("click", "a", function() {
+			settings.ds_style_img = $(this).index();
+			var image = imshow.createCanvas(dataset.data, width, height, {
+				cmap: cmaps[settings.ds_style_img]
+			});
+			var ctx = canvas.getContext("2d");
+			ctx.drawImage(image, 0, 0, canvas.width, canvas.height);
+		});
+		$("a:eq(" + settings.ds_style_img + ")", div_controls).click();
+		return div;
+	}
+
+	return {
+		settings: settings,
+		load: load,
+	};
+})();
