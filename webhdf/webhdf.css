@@ -1,0 +1,133 @@
+body {
+    padding: 0px;
+    margin: 0px;
+    font-family: sans-serif;
+}
+
+a.webhdf_link {
+    text-decoration: none;
+    cursor: pointer; color: #2222dd;
+}
+a.webhdf_link:hover {
+    text-decoration: underline;
+}
+
+table.webhdf_table {
+    margin: 10px;
+    counter-reset: line-number;
+}
+table.webhdf_table td, tr {
+    border: 0px solid #888888;
+    margin: .3em;
+    padding: .3em;
+    font-size: 100%;
+    font-family: monospace;
+}
+
+table.webhdf_table td:first-child:before {
+    content: counter(line-number) ":";
+    counter-increment: line-number;
+    color: #444;
+    padding-right: .3em;
+}
+table.webhdf_table td:first-child {
+    background-color: white;
+    text-align: right;
+}
+table.webhdf_table tr:nth-child(odd){ background-color:#eee; }
+table.webhdf_table tr:nth-child(even){ background-color:#fff; }
+
+#webhdf_navigation {
+    float: left;
+    width: 20%;
+    height: 100%;
+    background: #ffffff;
+    padding: 0px;
+}
+
+#webhdf_content {
+    float:left;
+    width: 80%;
+    height: 100%;
+    background: #ffffff;
+    padding: 0px;
+}
+
+.webhdf_title {
+    padding: 10px 20px;
+    background: #eeeeee;
+    font-size: 140%;
+    font-style: italic;
+}
+
+.webhdf_content {
+    padding: 10px;
+    font-size: 90%;
+}
+
+.webhdf_attrs {
+    font-family: monospace;
+    font-size: 80%;
+}
+.webhdf_attrs:before {
+    font-weight: bold;
+    content: "Attributes: ";
+}
+.webhdf_dsinfo {
+    font-family: monospace;
+    font-size: 80%;
+}
+.webhdf_dsinfo:before {
+    font-weight: bold;
+    content: "Shape/Datatype: ";
+}
+
+.webhdf_textarea {
+    border: 1px dashed #888888;
+    margin: 10px;
+    padding: 5px;
+    font-size: 95%;
+    overflow: auto;
+    width: 90%;
+    height: 60%;
+    color: black;
+    background-color: white;
+}
+
+.webhdf_nav_item {
+    cursor: pointer;
+    padding: 2px;
+    border: 1px;
+    border-style: none;
+}
+.webhdf_nav_item:hover {
+    padding: 1px;
+    background: #f0f0f0;
+    border: 1px dashed #888888;
+}
+.webhdf_nav_item:active {
+    padding: 1px;
+    background: #fafafa;
+    border: 1px dashed #000000;
+}
+
+.webhdf_nav_group {
+    display: block;
+    margin-left: 15px;
+    padding: 2px;
+}
+.webhdf_nav_group_name:before {
+    content: url(icons/folderclose.gif);
+    padding-right: 5px;
+}
+
+.webhdf_nav_dataset {
+    display: block;
+    margin-left: 15px;
+    vertical-align: middle;
+}
+.webhdf_nav_dataset_name:before {
+    content: url(icons/dataset.gif);
+    padding-right: 5px;
+    vertical-align: middle;
+}
