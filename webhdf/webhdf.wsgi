@@ -1,8 +1,19 @@
 ########################################################################
 # WebHDF server-side wsgi application
+import os
+import imp
 
-root_local = "/mnt/qao"
-url_webhdf = "/py/webhdf/webhdf.wsgi"
+
+root_local = ""
+url_webhdf = "webhdf.wsgi"
+
+try:
+    script_path = os.path.dirname(os.path.abspath(__file__))
+    conf = imp.load_source("config", os.path.join(script_path, "config.py"))
+    root_local = conf.root_local
+    url_webhdf = conf.url_webhdf
+except:
+    pass
 
 html_template = """
 <html>
@@ -35,7 +46,6 @@ from webob.exc import HTTPTemporaryRedirect, HTTPNotFound, HTTPInternalServerErr
 from webob.static import FileApp
 from webob.dec import wsgify
 
-import os
 import h5py
 import numpy
 import cStringIO
