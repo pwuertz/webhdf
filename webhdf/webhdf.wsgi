@@ -42,15 +42,14 @@ webhdf.load("{url_webhdf}", "{path}");
 ########################################################################
 
 from webob import Request, Response
-from webob.exc import HTTPTemporaryRedirect, HTTPNotFound, HTTPInternalServerError
+from webob.exc import HTTPNotFound, HTTPInternalServerError
 from webob.static import FileApp
 from webob.dec import wsgify
 
 import h5py
-import numpy
-import cStringIO
+import numpy as np
 import json
-import gzip
+import itertools
 
 def dtype2json(dtype):
     if not dtype.fields:
@@ -103,43 +102,84 @@ def response_file(path_local, fmt):
 
         res = Response(content_type="application/json", charset="utf-8")
         res.body = json.dumps(header, indent=4, separators=(',', ': '))
+        res.encode_content(encoding='gzip', lazy=True)
         return res
     else:
         return HTTPNotFound("Invalid format requested.")
 
 def response_dset(path_local, dset, fmt):
-    with h5py.File(path_local, "r") as fh:
-        if dset not in fh:
-            return HTTPNotFound("Dataset '%s' not found." % dset)
-        data = numpy.array(fh[dset])
+    h5fh = h5py.File(path_local, "r")
+    if dset not in h5fh:
+        return HTTPNotFound("Dataset '%s' not found." % dset)
+    dset = h5fh[dset]
 
     if fmt == "txt":
         # return the text representation from np.savetxt
-        output = cStringIO.StringIO()
-        numpy.savetxt(output, data)
-        
         res = Response(content_type="text/plain", charset="utf-8")
-        if data.dtype.names:
-            res.body += "#"+" ".join(data.dtype.names)+"\n"
-        res.body += output.getvalue()
+        if dset.dtype.names:
+            res.body += "#"+" ".join(dset.dtype.names)+"\n"
+        np.savetxt(res.body_file, dset)
+        res.encode_content(encoding='gzip', lazy=True)
         return res
     elif fmt == "py":
         # return python object representation of the data
         res = Response(content_type="text/plain", charset="utf-8")
-        res.body = repr(data)
+        res.body = repr(dset[:])
+        res.encode_content(encoding='gzip', lazy=True)
         return res
     elif fmt == "json":
         # return json representation
         res = Response(content_type="application/json", charset="utf-8")
-        res.body = json.dumps(data.tolist())
+        res.body = json.dumps(dset[:].tolist())
+        res.encode_content(encoding='gzip', lazy=True)
         return res
     elif fmt == "raw":
         # return the original binary dataset
-        res = Response(content_type="application/octet-stream", charset="utf-8")
-        res.body = bytes(data.data)
+        res = Response(content_type="application/octet-stream")
+        res.app_iter = DatasetIterator(h5fh, dset)
+        res.content_length = res.app_iter.num_bytes()
+        res.encode_content(encoding='gzip', lazy=True)
         return res
     else:
         return HTTPNotFound("Invalid format requested.")
+
+class DatasetIterator:
+    def __init__(self, h5fh, dset):
+        self.h5fh = h5fh
+        self.dset = dset
+
+    def num_bytes(self):
+        return np.prod(self.dset.shape) * self.dset.dtype.itemsize
+
+    def __iter__(self):
+        chunk_limit = 100 * 1024 # 100 KiB
+        
+        # number of dimensions that fit into chunk_limit
+        shape = self.dset.shape
+        ndims = len(shape)
+        dim_sizes = np.cumprod(shape[::-1])[::-1] * self.dset.dtype.itemsize
+        num_dims_below_limit = (dim_sizes < chunk_limit).sum()
+        
+        if num_dims_below_limit == ndims:
+            # return the whole dataset and stop
+            yield bytes(self.dset[:].data)
+        else:
+            # determine number of elements that fit into chunk_limit
+            iter_dim = (ndims-1) - num_dims_below_limit
+            elem_size = dim_sizes[iter_dim] / shape[iter_dim]
+            elems_per_chunk = int(np.ceil(float(chunk_limit))/float(elem_size))
+            chunks_per_iter_dim = int(np.ceil(float(shape[iter_dim])/float(elems_per_chunk)))
+            
+            # generate iterator over required dimensions
+            print dim_sizes, num_dims_below_limit
+            print "iterate over dim", iter_dim
+            print elems_per_chunk, chunks_per_iter_dim
+            ranges = [range(shape[i]) for i in range(iter_dim-1)] + [range(chunks_per_iter_dim)]
+            for select in itertools.product(*ranges):
+                from_ = select[-1] * elems_per_chunk
+                to_ = from_ + elems_per_chunk
+                select = select[:-1] + (slice(from_, to_),)
+                yield bytes(self.dset[select].data)
 
 def webhdf_application(environ, start_response):
     req = Request(environ)
@@ -172,20 +212,13 @@ def webhdf_application(environ, start_response):
         return res(environ, start_response)
 
 @wsgify.middleware
-def debug_compress(req, app):
+def debug(req, app):
     try:
         res = req.get_response(app)
-        if res.content_length > 10000 and "gzip" in req.accept_encoding:
-            buffer = cStringIO.StringIO()
-            gzf = gzip.GzipFile(fileobj=buffer, mode='w')
-            gzf.write(res.body)
-            gzf.close()
-            res.content_encoding = 'gzip'
-            res.body = buffer.getvalue()
     except:
         import traceback
         err = traceback.format_exc()
-        return Response(body=err, content_type="text/plain", status=500)
+        return HTTPInternalServerError(err)
     return res
 
-application = debug_compress(webhdf_application)
+application = debug(webhdf_application)
